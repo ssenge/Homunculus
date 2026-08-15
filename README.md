@@ -80,10 +80,21 @@ This loads Homunculus into A. A will ask you what to build and in which director
 
 You stay in conversation with A throughout. You can redirect, add context, or override any decision at any point.
 
+### Configuring B's model and effort
+
+You can control which model B runs on and how hard it thinks — independently of A. Pass them when invoking the skill or when starting the harness directly.
+
+| Flag | Values | Effect |
+|---|---|---|
+| `--model` | `claude-haiku-4-5-20251001`, `claude-sonnet-5`, `claude-opus-5` | Which model B uses |
+| `--effort` | `low`, `medium`, `high`, `xhigh`, `max` | How much effort B puts in |
+
+Both are standard `claude` CLI flags forwarded verbatim to B's process. Run `claude --help` for the full list.
+
 ---
 
 **Autonomous mode** (no A in the loop, rules-only):
 
 ```bash
-bash homunculus.sh --claude "implement the auth module" --cwd /path/to/project
+bash homunculus.sh --cwd /path/to/project --model claude-haiku-4-5-20251001 --effort high "implement the auth module"
 ```
