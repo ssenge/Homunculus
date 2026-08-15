@@ -63,19 +63,23 @@ Homunculus sources this file when launching B. The token lets B work and be driv
 
 ### 4. Use it
 
-In your unrestricted Claude A session, invoke the skill:
+There are two ways to invoke Homunculus from within your unrestricted Claude A session:
+
+**Option 1 — slash command, then answer A's questions:**
 
 ```
 /homunculus
 ```
 
-This loads Homunculus into A. A will ask you what to build, which directory to work in, and which model and effort level to use for B. You can also tell A upfront:
+This loads the skill into A. A will then ask you what to build, which directory, which model, and which effort level to use for B. You answer interactively.
 
-> "Use the homunculus skill. Launch B with model `claude-haiku-4-5-20251001` and effort `high` in `/path/to/project`, and implement the auth module."
+**Option 2 — tell A directly in one go:**
 
-A will pass `--model claude-haiku-4-5-20251001 --effort high` to B's `claude` invocation automatically.
+> "Use the homunculus skill to implement the auth module in `/path/to/project`. Use model `claude-haiku-4-5-20251001` and effort `high` for B."
 
-It then:
+A picks up all parameters from your message and launches B without asking follow-up questions.
+
+Either way, once B is running, A:
 
 1. Launches a B session in a tmux pane using your restricted account's token
 2. Sends B your instruction
