@@ -5,11 +5,9 @@
 #   ./homunculus.sh [--cwd PATH] [--b-flags "FLAGS"] "instruction for B"
 #
 #   --cwd PATH      B's working directory (default: current dir)
+#   --effort LEVEL  Effort level sent to B as /effort after launch (low|medium|high|highest)
 #   --b-flags FLAGS Extra flags passed verbatim to the `claude` invocation for B
-#                   Examples:
-#                     --b-flags "--model claude-haiku-4-5-20251001"
-#                     --b-flags "--model claude-opus-5"
-#                     --b-flags "--model claude-sonnet-5 --thinking-budget-tokens 10000"
+#                   e.g. --b-flags "--model claude-haiku-4-5-20251001"
 #
 # Safety: default-deny dangerous actions, escalate unknown screens, never "don't ask again".
 # Sandbox note: needs pty allocation — run from a real terminal, not inside a sandbox.
@@ -21,13 +19,15 @@ set -euo pipefail
 # ── Parse args ─────────────────────────────────────────────────────────────
 B_CWD="$PWD"
 B_FLAGS=""
+B_EFFORT=""
 TASK=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cwd)     B_CWD="$2";   shift 2 ;;
-    --b-flags) B_FLAGS="$2"; shift 2 ;;
-    *)         TASK="$1";     shift ;;
+    --cwd)     B_CWD="$2";    shift 2 ;;
+    --effort)  B_EFFORT="$2"; shift 2 ;;
+    --b-flags) B_FLAGS="$2";  shift 2 ;;
+    *)         TASK="$1";      shift ;;
   esac
 done
 
@@ -242,6 +242,14 @@ echo "Homunculus: waiting for B to be ready…"
 wait_for '\? for shortcuts' 60 || { echo "ERROR: claude never showed idle box"; exit 1; }
 snap
 decide_log "B is ready"
+
+# ── Set effort level ──────────────────────────────────────────────────────────
+if [[ -n "$B_EFFORT" ]]; then
+  echo "Homunculus: setting effort → $B_EFFORT"
+  decide_log "EFFORT: /effort $B_EFFORT"
+  say "/effort $B_EFFORT"
+  wait_for '\? for shortcuts' 10 || true
+fi
 
 # ── Send instruction ──────────────────────────────────────────────────────────
 echo "Homunculus: sending task → \"$TASK\""

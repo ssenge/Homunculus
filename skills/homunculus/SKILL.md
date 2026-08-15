@@ -38,15 +38,17 @@ You can supervise multiple sessions; check each one in turn.
 Before launching, ask the user (or infer from context) which model and flags B should use.
 Common choices:
 
-| Goal | Flags |
-|---|---|
-| Cheapest / fastest | `--model claude-haiku-4-5-20251001` |
-| Balanced | `--model claude-sonnet-5` |
-| Most capable | `--model claude-opus-5` |
-| Extended thinking / high effort | `--model claude-opus-5 --thinking-budget-tokens 10000` |
-| Max effort | `--model claude-opus-5 --thinking-budget-tokens 80000` |
+**Model** is a CLI flag; **effort** is a Claude Code slash command sent after launch.
 
-Run `claude --help` to see the full list of supported flags. Default (no flags) uses Claude Code's own defaults.
+| Setting | How |
+|---|---|
+| Cheapest model | `B_FLAGS="--model claude-haiku-4-5-20251001"` |
+| Balanced model | `B_FLAGS="--model claude-sonnet-5"` |
+| Most capable model | `B_FLAGS="--model claude-opus-5"` |
+| Low effort | send `/effort low` after B is ready |
+| High effort | send `/effort high` after B is ready |
+
+Default (no flags, no effort command) uses Claude Code's own defaults.
 
 Run these Bash commands in order:
 
@@ -64,7 +66,7 @@ tmux -S "$SOCK" new-session -d -s "$SESS" -x 220 -y 50
 tmux -S "$SOCK" send-keys -t "$SESS" "cd /path/to/B_CWD && claude $B_FLAGS" Enter
 ```
 
-Then **wait for B's idle input box** before sending the first instruction:
+Then **wait for B's idle input box**, optionally set effort, then send the task:
 
 ```bash
 # Poll until claude's idle status bar appears (up to 60 s)
@@ -75,9 +77,19 @@ for i in $(seq 1 120); do
 done
 ```
 
-Once you see `READY`, send the first instruction:
+Once you see `READY`, optionally set the effort level, then send the task:
 
 ```bash
+# Optional: set effort level (low | medium | high | highest)
+tmux -S "$SOCK" send-keys -t "$SESS" -l "/effort high"
+tmux -S "$SOCK" send-keys -t "$SESS" Enter
+# wait for idle again
+for i in $(seq 1 20); do
+  tmux -S "$SOCK" capture-pane -t "$SESS" -p | grep -q '? for shortcuts' && break
+  sleep 0.5
+done
+
+# Send the actual task
 tmux -S "$SOCK" send-keys -t "$SESS" -l "your instruction here"
 tmux -S "$SOCK" send-keys -t "$SESS" Enter
 ```
