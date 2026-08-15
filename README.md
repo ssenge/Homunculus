@@ -1,6 +1,6 @@
 # Homunculus
 
-You have two Claude accounts. Your **unrestricted** Claude (A) can act freely — no permission prompts — but comes at a high token cost, so you don't want it doing all the heavy lifting. Your **restricted** Claude (B) is cheap and can grind through large tasks, but must ask for permission before every action — which normally means you sit there pressing keys all day.
+Assume you have two Claude accounts. Your **unrestricted** Claude (A) can act freely — no permission prompts — but comes at a high token cost, so you don't want it doing all the heavy lifting. Your **restricted** Claude (B) is cheap and can grind through large tasks, but must ask for permission before every action — which normally means you sit there pressing keys all day.
 
 Homunculus solves this: A steers B. A reads everything B outputs, understands what B is doing, and handles every permission prompt with judgment — using almost no tokens to do so. B does the heavy lifting cheaply. You stay in conversation with A. Nothing dangerous slips through without A — and through A, you — explicitly approving it.
 
