@@ -38,17 +38,16 @@ You can supervise multiple sessions; check each one in turn.
 Before launching, ask the user (or infer from context) which model and flags B should use.
 Common choices:
 
-**Model** is a CLI flag; **effort** is a Claude Code slash command sent after launch.
+Both model and effort are CLI flags passed directly to `claude`:
 
-| Setting | How |
+| Setting | Flag |
 |---|---|
-| Cheapest model | `B_FLAGS="--model claude-haiku-4-5-20251001"` |
-| Balanced model | `B_FLAGS="--model claude-sonnet-5"` |
-| Most capable model | `B_FLAGS="--model claude-opus-5"` |
-| Low effort | send `/effort low` after B is ready |
-| High effort | send `/effort high` after B is ready |
+| Cheapest model | `--model claude-haiku-4-5-20251001` |
+| Balanced model | `--model claude-sonnet-5` |
+| Most capable model | `--model claude-opus-5` |
+| Effort | `--effort low` / `medium` / `high` / `xhigh` / `max` |
 
-Default (no flags, no effort command) uses Claude Code's own defaults.
+Default (no flags) uses Claude Code's own defaults.
 
 Run these Bash commands in order:
 
@@ -57,7 +56,7 @@ Run these Bash commands in order:
 SESSION_ID="B1"   # or "auth-worker", etc.
 SOCK="$TMPDIR/hom-${SESSION_ID}.sock"
 SESS="$SESSION_ID"
-B_FLAGS="--model claude-haiku-4-5-20251001"   # set to "" for default
+B_FLAGS="--model claude-haiku-4-5-20251001 --effort high"   # adjust or leave empty
 
 # 2. Start tmux pane (wide to prevent line-wrap)
 tmux -S "$SOCK" new-session -d -s "$SESS" -x 220 -y 50
@@ -77,19 +76,9 @@ for i in $(seq 1 120); do
 done
 ```
 
-Once you see `READY`, optionally set the effort level, then send the task:
+Once you see `READY`, send the task:
 
 ```bash
-# Optional: set effort level (low | medium | high | highest)
-tmux -S "$SOCK" send-keys -t "$SESS" -l "/effort high"
-tmux -S "$SOCK" send-keys -t "$SESS" Enter
-# wait for idle again
-for i in $(seq 1 20); do
-  tmux -S "$SOCK" capture-pane -t "$SESS" -p | grep -q '? for shortcuts' && break
-  sleep 0.5
-done
-
-# Send the actual task
 tmux -S "$SOCK" send-keys -t "$SESS" -l "your instruction here"
 tmux -S "$SOCK" send-keys -t "$SESS" Enter
 ```

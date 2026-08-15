@@ -5,8 +5,8 @@
 #   ./homunculus.sh [--cwd PATH] [--b-flags "FLAGS"] "instruction for B"
 #
 #   --cwd PATH      B's working directory (default: current dir)
-#   --effort LEVEL  Effort level sent to B as /effort after launch (low|medium|high|highest)
-#   --b-flags FLAGS Extra flags passed verbatim to the `claude` invocation for B
+#   --effort LEVEL  Effort level for B (low|medium|high|xhigh|max) — passed as --effort to claude
+#   --b-flags FLAGS Any additional flags passed verbatim to the `claude` invocation for B
 #                   e.g. --b-flags "--model claude-haiku-4-5-20251001"
 #
 # Safety: default-deny dangerous actions, escalate unknown screens, never "don't ask again".
@@ -232,9 +232,10 @@ STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 SEOF
 trap 'rm -f "$STATE_FILE" 2>/dev/null; cleanup' EXIT
 
-echo "Homunculus: launching claude in $B_CWD${B_FLAGS:+ ($B_FLAGS)}"
-decide_log "LAUNCH claude $B_FLAGS in $B_CWD"
-tmux -S "$SOCK" send-keys -t "$SESS" "cd '$B_CWD' && claude $B_FLAGS" Enter
+CLAUDE_CMD="claude${B_EFFORT:+ --effort $B_EFFORT}${B_FLAGS:+ $B_FLAGS}"
+echo "Homunculus: launching $CLAUDE_CMD in $B_CWD"
+decide_log "LAUNCH $CLAUDE_CMD in $B_CWD"
+tmux -S "$SOCK" send-keys -t "$SESS" "cd '$B_CWD' && $CLAUDE_CMD" Enter
 start_jsonl_reader
 
 # ── Wait for B to be ready ────────────────────────────────────────────────────
@@ -242,14 +243,6 @@ echo "Homunculus: waiting for B to be ready…"
 wait_for '\? for shortcuts' 60 || { echo "ERROR: claude never showed idle box"; exit 1; }
 snap
 decide_log "B is ready"
-
-# ── Set effort level ──────────────────────────────────────────────────────────
-if [[ -n "$B_EFFORT" ]]; then
-  echo "Homunculus: setting effort → $B_EFFORT"
-  decide_log "EFFORT: /effort $B_EFFORT"
-  say "/effort $B_EFFORT"
-  wait_for '\? for shortcuts' 10 || true
-fi
 
 # ── Send instruction ──────────────────────────────────────────────────────────
 echo "Homunculus: sending task → \"$TASK\""
