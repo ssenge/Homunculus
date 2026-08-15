@@ -88,17 +88,6 @@ In either case, A then:
 
 You stay in conversation with A throughout — redirect, add context, or override any decision at any time.
 
-### Choosing B's model and effort
-
-B's model and effort are set independently of A. Both are standard `claude` flags:
-
-| Flag | Values |
-|---|---|
-| `--model` | `claude-haiku-4-5-20251001` · `claude-sonnet-5` · `claude-opus-5` |
-| `--effort` | `low` · `medium` · `high` · `xhigh` · `max` |
-
-Pick a cheap, high-effort model like Haiku for B to get the most work per token. Run `claude --help` for the complete flag list.
-
 ## Autonomous mode
 
 To run B rules-only, with no A in the loop:
