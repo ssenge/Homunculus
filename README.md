@@ -34,7 +34,7 @@ Requires: `tmux` (≥ 3.0), `claude` CLI, `python3`.
 ### 1. Install the Homunculus plugin
 
 ```bash
-claude plugin marketplace add github:ssenge/Homunculus
+claude plugin marketplace add ssenge/Homunculus
 claude plugin install homunculus@homunculus
 ```
 
