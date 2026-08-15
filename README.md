@@ -69,7 +69,13 @@ In your unrestricted Claude A session, invoke the skill:
 /homunculus
 ```
 
-This loads Homunculus into A. A will ask you what to build and in which directory. It then:
+This loads Homunculus into A. A will ask you what to build, which directory to work in, and which model and effort level to use for B. You can also tell A upfront:
+
+> "Use the homunculus skill. Launch B with model `claude-haiku-4-5-20251001` and effort `high` in `/path/to/project`, and implement the auth module."
+
+A will pass `--model claude-haiku-4-5-20251001 --effort high` to B's `claude` invocation automatically.
+
+It then:
 
 1. Launches a B session in a tmux pane using your restricted account's token
 2. Sends B your instruction
