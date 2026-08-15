@@ -43,9 +43,10 @@ Common choices:
 | Cheapest / fastest | `--model claude-haiku-4-5-20251001` |
 | Balanced | `--model claude-sonnet-5` |
 | Most capable | `--model claude-opus-5` |
-| Extended thinking | `--model claude-opus-5` (thinking is model-level in Claude Code) |
+| Extended thinking / high effort | `--model claude-opus-5 --thinking-budget-tokens 10000` |
+| Max effort | `--model claude-opus-5 --thinking-budget-tokens 80000` |
 
-Default (no flags) uses whatever Claude Code's own default is.
+Run `claude --help` to see the full list of supported flags. Default (no flags) uses Claude Code's own defaults.
 
 Run these Bash commands in order:
 

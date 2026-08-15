@@ -1,35 +1,30 @@
 #!/usr/bin/env bash
-# homunculus.sh — Homunculus supervisor: drives a worker session (B) via tmux.
+# homunculus.sh — Homunculus supervisor: drives a Claude B worker session via tmux.
 #
 # Usage:
-#   ./homunculus.sh [--fake] [--claude] [--cwd PATH] [--b-flags "FLAGS"] "instruction for B"
+#   ./homunculus.sh [--cwd PATH] [--b-flags "FLAGS"] "instruction for B"
 #
-#   --fake          Use fake_b.sh stand-in instead of real claude (default: --fake)
-#   --claude        Launch real `claude` as worker B
-#   --cwd PATH      B's working directory (default: current dir); used to locate B's JSONL
+#   --cwd PATH      B's working directory (default: current dir)
 #   --b-flags FLAGS Extra flags passed verbatim to the `claude` invocation for B
-#                   e.g. --b-flags "--model claude-haiku-4-5-20251001"
-#                        --b-flags "--model claude-opus-5"
+#                   Examples:
+#                     --b-flags "--model claude-haiku-4-5-20251001"
+#                     --b-flags "--model claude-opus-5"
+#                     --b-flags "--model claude-sonnet-5 --thinking-budget-tokens 10000"
 #
 # Safety: default-deny dangerous actions, escalate unknown screens, never "don't ask again".
 # Sandbox note: needs pty allocation — run from a real terminal, not inside a sandbox.
 #
 # Verified 2026-08-15 against tmux 3.7b on macOS Darwin 25.5.0.
-# JSONL schema verified from live transcripts (see VERIFIED.md).
-# Prompt strings verified via live capture-pane session (see VERIFIED.md).
 
 set -euo pipefail
 
 # ── Parse args ─────────────────────────────────────────────────────────────
-MODE="fake"
 B_CWD="$PWD"
 B_FLAGS=""
 TASK=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --fake)    MODE="fake";   shift ;;
-    --claude)  MODE="claude"; shift ;;
     --cwd)     B_CWD="$2";   shift 2 ;;
     --b-flags) B_FLAGS="$2"; shift 2 ;;
     *)         TASK="$1";     shift ;;
@@ -48,9 +43,6 @@ TRANSCRIPT="$LOG_DIR/transcript-$TS.txt"
 DECISIONS="$LOG_DIR/decisions-$TS.log"
 CONTENT_LOG="$LOG_DIR/content-$TS.log"
 JSONL_PID=""
-
-# Deny key differs: fake_b has 1=Yes/2=No; real claude has 1=Yes/2=dont-ask/3=No
-[[ "$MODE" == "fake" ]] && DENY_KEY="2" || DENY_KEY="3"
 
 mkdir -p "$LOG_DIR"
 
@@ -74,12 +66,10 @@ cleanup() {
   decide_log "TEARDOWN — killing tmux server"
   tmux -S "$SOCK" kill-server 2>/dev/null || true
 }
-# (trap set after STATE_FILE is known — see harness section)
 
 # ── Wait helpers ─────────────────────────────────────────────────────────────
 
 # Wait until screen stops changing for N consecutive 0.2s ticks.
-# Returns settled screen on stdout.
 wait_settle() {
   local ticks="${1:-3}" prev="" curr="" count=0
   while [[ $count -lt $ticks ]]; do
@@ -109,59 +99,43 @@ wait_for() {
 # ── State classifier ──────────────────────────────────────────────────────────
 # Verified live against claude v2.1.233 via capture-pane (2026-08-15).
 #
-# The bottom status bar (last non-blank line) is the reliable state signal:
+# Bottom status bar (last non-blank line) is the reliable state signal:
 #   idle       → "? for shortcuts"
 #   working    → "esc to interrupt"
 #   permission → "Esc to cancel"
-#
-# fake_b.sh stand-in uses different signals (no status bar), handled below.
 classify() {
   local s="$1"
   local nb; nb="$(printf '%s' "$s" | grep -v '^[[:space:]]*$')"
   local last1; last1="$(printf '%s' "$nb" | tail -1)"
-  local last5; last5="$(printf '%s' "$nb" | tail -5)"
 
-  # Real claude: classify by bottom status bar
   if   printf '%s' "$last1" | grep -q 'Esc to cancel'; then
     printf 'permission'
   elif printf '%s' "$last1" | grep -q 'esc to interrupt'; then
     printf 'working'
   elif printf '%s' "$last1" | grep -q '? for shortcuts'; then
     printf 'idle'
-
-  # fake_b stand-in: no status bar, use content signals
-  elif printf '%s' "$last1" | grep -qE '^>[[:space:]]*$'; then
-    printf '%s' "$last5" | grep -qE 'Do you want to proceed' && printf 'permission' || printf 'unknown'
-  elif printf '%s' "$last5" | grep -q 'what should I do'; then
-    printf 'idle'
-  elif printf '%s' "$last5" | grep -qE 'APPROVED|DENIED|INVALID'; then
-    printf 'idle'
-  elif printf '%s' "$last1" | grep -qE '[%$#][[:space:]]*$'; then
-    printf 'idle'
-
   else
     printf 'unknown'
   fi
 }
 
-# ── Policy v0 ────────────────────────────────────────────────────────────────
-# Patterns that are hard-denied regardless of context.
+# ── Policy ────────────────────────────────────────────────────────────────────
+# Hard-deny patterns regardless of context.
 DANGEROUS_PAT='rm -rf|push --force|curl[^|]*\|[^|]*sh|sudo |dd if=|mkfs|chmod -R 777|> /dev/sd|:[[:space:]]*{.*:[[:space:]]*{.*}.*}'
 
 policy_decide() {
   local s="$1"
   if printf '%s' "$s" | grep -qE "$DANGEROUS_PAT"; then
     decide_log "DENY — dangerous pattern in prompt"
-    key "$DENY_KEY" Enter
+    key '3' Enter   # No
   else
     decide_log "APPROVE — no dangerous pattern detected"
-    key '1' Enter   # "Yes, just this once"
+    key '1' Enter   # Yes, just this once
   fi
 }
 
-# ── JSONL content reader (real claude mode only) ───────────────────────────────
+# ── JSONL content reader ───────────────────────────────────────────────────────
 cwd_to_project_dir() {
-  # §16.2: replace '/' and '.' with '-'
   printf '%s' "$1" | sed 's|[/.]|-|g'
 }
 
@@ -174,9 +148,7 @@ start_jsonl_reader() {
     return
   fi
 
-  # Use a temp sentinel file to find only JSONL files created AFTER we launched B
   local sentinel; sentinel="$(mktemp)"
-  # Wait up to 15s for a new .jsonl file to appear (newer than the sentinel)
   local jsonl="" i=0
   while [[ $i -lt 30 ]]; do
     jsonl="$(find "$proj_path" -name '*.jsonl' -newer "$sentinel" 2>/dev/null | head -1)"
@@ -191,9 +163,8 @@ start_jsonl_reader() {
   fi
 
   decide_log "CONTENT: tailing $jsonl"
-  # Parse events in background, write human-readable summary to content log
   tail -f "$jsonl" 2>/dev/null | python3 -u - "$CONTENT_LOG" <<'PYEOF' &
-import sys, json, datetime
+import sys, json
 
 log_path = sys.argv[1]
 for line in sys.stdin:
@@ -243,45 +214,32 @@ PYEOF
   JSONL_PID=$!
 }
 
-# ── Harness: launch B ──────────────────────────────────────────────────────────
+# ── Launch B ──────────────────────────────────────────────────────────────────
 echo "Homunculus: starting tmux session '$SESS' on $SOCK"
 tmux -S "$SOCK" new-session -d -s "$SESS" -x 220 -y 50
 
-# Write state file so Claude A can discover B without being told the socket path.
-# A reads: HOMUNCULUS_STATE (default ~/.homunculus.state)
 STATE_FILE="${HOMUNCULUS_STATE:-$HOME/.homunculus.state}"
 cat > "$STATE_FILE" <<SEOF
 SOCK=$SOCK
 SESS=$SESS
-MODE=$MODE
 B_CWD=$B_CWD
+B_FLAGS=$B_FLAGS
 TASK=$TASK
 LOG_DIR=$LOG_DIR
 TRANSCRIPT=$TRANSCRIPT
 DECISIONS=$DECISIONS
 STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 SEOF
-# Register cleanup (replaces the earlier placeholder)
 trap 'rm -f "$STATE_FILE" 2>/dev/null; cleanup' EXIT
 
-if [[ "$MODE" == "fake" ]]; then
-  echo "Homunculus: launching fake_b.sh (stand-in)"
-  decide_log "LAUNCH fake_b.sh"
-  tmux -S "$SOCK" send-keys -t "$SESS" "bash '$SCRIPT_DIR/fake_b.sh'" Enter
-else
-  echo "Homunculus: launching claude in $B_CWD${B_FLAGS:+ ($B_FLAGS)}"
-  decide_log "LAUNCH claude $B_FLAGS --cwd $B_CWD"
-  tmux -S "$SOCK" send-keys -t "$SESS" "cd '$B_CWD' && claude $B_FLAGS" Enter
-  start_jsonl_reader
-fi
+echo "Homunculus: launching claude in $B_CWD${B_FLAGS:+ ($B_FLAGS)}"
+decide_log "LAUNCH claude $B_FLAGS in $B_CWD"
+tmux -S "$SOCK" send-keys -t "$SESS" "cd '$B_CWD' && claude $B_FLAGS" Enter
+start_jsonl_reader
 
 # ── Wait for B to be ready ────────────────────────────────────────────────────
 echo "Homunculus: waiting for B to be ready…"
-if [[ "$MODE" == "fake" ]]; then
-  wait_for 'what should I do' 30 || { echo "ERROR: B never became ready"; exit 1; }
-else
-  wait_for '\? for shortcuts' 60 || { echo "ERROR: claude never showed idle box"; exit 1; }
-fi
+wait_for '\? for shortcuts' 60 || { echo "ERROR: claude never showed idle box"; exit 1; }
 snap
 decide_log "B is ready"
 
@@ -299,7 +257,6 @@ while true; do
   s="$(wait_settle 3)"
   h="$(printf '%s' "$s" | md5)"
 
-  # diff-gate: skip if screen hasn't changed since last action
   if [[ "$h" == "$LAST_HASH" ]]; then
     sleep 0.5
     continue
@@ -324,25 +281,13 @@ while true; do
       ;;
     idle)
       ACTED=false
-      # In fake mode: one task, then done
-      if [[ "$MODE" == "fake" ]]; then
-        # Check if we've seen the result
-        if printf '%s' "$s" | grep -qE 'APPROVED|DENIED|INVALID'; then
-          echo "Homunculus: task complete"
-          decide_log "DONE"
-          break
-        fi
-      else
-        # claude idle with no task left → done
-        decide_log "IDLE — no more tasks queued; stopping"
-        echo "Homunculus: B is idle and task is done"
-        break
-      fi
+      decide_log "IDLE — no more tasks queued; stopping"
+      echo "Homunculus: B is idle and task is done"
+      break
       ;;
     unknown)
-      # Escalate: ring bell, log, wait for human or timeout
       decide_log "UNKNOWN screen — escalating (bell); waiting 30s for human"
-      printf '\a'   # terminal bell
+      printf '\a'
       echo "Homunculus: UNKNOWN screen state — check transcript. Waiting 30s."
       sleep 30
       ACTED=false
