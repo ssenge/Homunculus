@@ -1,6 +1,6 @@
 # Homunculus
 
-> **homunculus** *(Latin, "little human"* — diminutive of *homo)*. In alchemical lore, a small artificial being brought to life and directed by its maker to carry out work on its behalf.
+> **homunculus** *(Latin, "little human")*. In alchemical lore, a small artificial being brought to life and directed by its maker to carry out work on its behalf.
 
 Assume you have two Claude accounts. Your **unrestricted** Claude (A) can act freely — no permission prompts — but comes at a high token cost, so you don't want it doing all the heavy lifting. Your **restricted** Claude (B) is cheap and can grind through large tasks, but must ask for permission before every action — which normally means you sit there pressing keys all day.
 
