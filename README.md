@@ -4,30 +4,7 @@ You have two Claude accounts: an **unrestricted** one and a **restricted** one. 
 
 Homunculus makes your unrestricted Claude (A) the approval gate for your restricted Claude (B). A reads everything B outputs, understands what B is doing, and handles every permission prompt with judgment. You stay in conversation with A. B gets the work done. Nothing dangerous slips through without A — and through A, you — explicitly approving it.
 
-```mermaid
-sequenceDiagram
-    actor You
-    participant A as A · unrestricted
-    participant B as B · restricted
-
-    You->>A: what to build & where
-    A->>B: launch + send instruction
-    loop for each action B wants to take
-        B-->>A: permission prompt
-        A->>A: read B's transcript,<br/>understand the action
-        alt safe
-            A->>B: approve (key 1)
-        else dangerous
-            A->>B: deny + redirect (key 3)
-        else unsure
-            A->>You: escalate — what should I do?
-            You->>A: decision
-            A->>B: act on your decision
-        end
-    end
-    B-->>A: task complete
-    A->>You: report what was done
-```
+![Homunculus diagram](diagram.png)
 
 A reads B's live transcript to understand what B is doing. The control channel (`capture-pane` / `send-keys`) lets A detect when B is blocked on a permission prompt and press the right key. B never knows it is being supervised.
 
