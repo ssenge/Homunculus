@@ -4,6 +4,19 @@ You have two Claude accounts: an **unrestricted** one and a **restricted** one. 
 
 Homunculus makes your unrestricted Claude (A) the approval gate for your restricted Claude (B). A reads everything B outputs, understands what B is doing, and handles every permission prompt with judgment. You stay in conversation with A. B gets the work done. Nothing dangerous slips through without A — and through A, you — explicitly approving it.
 
+```
+        you
+         │  plan, clarify, override
+         ▼
+┌────────────────────┐        instructions, approvals
+│  A · unrestricted  │ ──────────────────────────────► ┌───────────────────────┐
+│  (your session)    │                                  │  B · restricted       │
+│                    │ ◄──────────────────────────────  │  (tmux pane)          │
+└────────────────────┘    B's output, permission prompts└───────────────────────┘
+```
+
+A reads B's live transcript to understand what B is doing. The control channel (`capture-pane` / `send-keys`) lets A detect when B is blocked on a permission prompt and press the right key. B never knows it is being supervised.
+
 ## Use cases
 
 - **Supervised work with a restricted account.** Your restricted Claude (B) must ask for approval before every action. Homunculus lets it work autonomously while your unrestricted Claude (A) acts as the human it needs — approving safe actions, blocking dangerous ones, escalating anything unclear to you.
@@ -59,13 +72,22 @@ Homunculus sources this file when launching B. The token lets B work and be driv
 
 ### 4. Use it
 
-In your unrestricted Claude A session:
+In your unrestricted Claude A session, invoke the skill:
 
 ```
 /homunculus
 ```
 
-Tell A what to build and which directory B should work in. A handles the rest.
+This loads Homunculus into A. A will ask you what to build and in which directory. It then:
+
+1. Launches a B session in a tmux pane using your restricted account's token
+2. Sends B your instruction
+3. Monitors B's output continuously via its live JSONL transcript
+4. Whenever B raises a permission prompt, A reads what action B wants to take, decides based on your plan, and presses the appropriate key — `1` to approve, `3` to deny
+5. If A is unsure, it surfaces the question to you instead of guessing
+6. When B finishes, A reports what was done and closes the session
+
+You stay in conversation with A throughout. You can redirect, add context, or override any decision at any point.
 
 ---
 
