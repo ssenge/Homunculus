@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "homunculus",
+  "description": "Supervisor skill: lets Claude A launch, steer, and supervise Claude B worker sessions via tmux — reading B's output, approving permission prompts with judgment, and relaying context.",
+  "version": "0.1.0",
+  "author": {
+    "name": "ssenge",
+    "url": "https://github.com/ssenge"
+  },
+  "homepage": "https://github.com/ssenge/Homunculus",
+  "repository": "https://github.com/ssenge/Homunculus",
+  "license": "MIT"
+}

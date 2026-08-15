@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
+  "name": "homunculus",
+  "owner": {
+    "name": "ssenge"
+  },
+  "plugins": [
+    {
+      "name": "homunculus",
+      "source": "./",
+      "description": "Supervisor skill: lets Claude A launch, steer, and supervise Claude B worker sessions via tmux."
+    }
+  ]
+}
