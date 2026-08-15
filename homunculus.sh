@@ -2,11 +2,14 @@
 # homunculus.sh — Homunculus supervisor: drives a worker session (B) via tmux.
 #
 # Usage:
-#   ./homunculus.sh [--fake] [--cwd PATH] "instruction for B"
+#   ./homunculus.sh [--fake] [--claude] [--cwd PATH] [--b-flags "FLAGS"] "instruction for B"
 #
-#   --fake     Use fake_b.sh stand-in instead of real claude (default: --fake)
-#   --claude   Launch real `claude` as worker B
-#   --cwd PATH B's working directory (default: current dir); used to locate B's JSONL
+#   --fake          Use fake_b.sh stand-in instead of real claude (default: --fake)
+#   --claude        Launch real `claude` as worker B
+#   --cwd PATH      B's working directory (default: current dir); used to locate B's JSONL
+#   --b-flags FLAGS Extra flags passed verbatim to the `claude` invocation for B
+#                   e.g. --b-flags "--model claude-haiku-4-5-20251001"
+#                        --b-flags "--model claude-opus-5"
 #
 # Safety: default-deny dangerous actions, escalate unknown screens, never "don't ask again".
 # Sandbox note: needs pty allocation — run from a real terminal, not inside a sandbox.
@@ -20,14 +23,16 @@ set -euo pipefail
 # ── Parse args ─────────────────────────────────────────────────────────────
 MODE="fake"
 B_CWD="$PWD"
+B_FLAGS=""
 TASK=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --fake)   MODE="fake";   shift ;;
-    --claude) MODE="claude"; shift ;;
-    --cwd)    B_CWD="$2";   shift 2 ;;
-    *)        TASK="$1";     shift ;;
+    --fake)    MODE="fake";   shift ;;
+    --claude)  MODE="claude"; shift ;;
+    --cwd)     B_CWD="$2";   shift 2 ;;
+    --b-flags) B_FLAGS="$2"; shift 2 ;;
+    *)         TASK="$1";     shift ;;
   esac
 done
 
@@ -264,9 +269,9 @@ if [[ "$MODE" == "fake" ]]; then
   decide_log "LAUNCH fake_b.sh"
   tmux -S "$SOCK" send-keys -t "$SESS" "bash '$SCRIPT_DIR/fake_b.sh'" Enter
 else
-  echo "Homunculus: launching claude in $B_CWD"
-  decide_log "LAUNCH claude --cwd $B_CWD"
-  tmux -S "$SOCK" send-keys -t "$SESS" "cd '$B_CWD' && claude" Enter
+  echo "Homunculus: launching claude in $B_CWD${B_FLAGS:+ ($B_FLAGS)}"
+  decide_log "LAUNCH claude $B_FLAGS --cwd $B_CWD"
+  tmux -S "$SOCK" send-keys -t "$SESS" "cd '$B_CWD' && claude $B_FLAGS" Enter
   start_jsonl_reader
 fi
 

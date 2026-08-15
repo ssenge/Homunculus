@@ -35,6 +35,18 @@ You can supervise multiple sessions; check each one in turn.
 
 ## 2. Launching B
 
+Before launching, ask the user (or infer from context) which model and flags B should use.
+Common choices:
+
+| Goal | Flags |
+|---|---|
+| Cheapest / fastest | `--model claude-haiku-4-5-20251001` |
+| Balanced | `--model claude-sonnet-5` |
+| Most capable | `--model claude-opus-5` |
+| Extended thinking | `--model claude-opus-5` (thinking is model-level in Claude Code) |
+
+Default (no flags) uses whatever Claude Code's own default is.
+
 Run these Bash commands in order:
 
 ```bash
@@ -42,12 +54,13 @@ Run these Bash commands in order:
 SESSION_ID="B1"   # or "auth-worker", etc.
 SOCK="$TMPDIR/hom-${SESSION_ID}.sock"
 SESS="$SESSION_ID"
+B_FLAGS="--model claude-haiku-4-5-20251001"   # set to "" for default
 
 # 2. Start tmux pane (wide to prevent line-wrap)
 tmux -S "$SOCK" new-session -d -s "$SESS" -x 220 -y 50
 
 # 3. Launch Claude B in B's working directory
-tmux -S "$SOCK" send-keys -t "$SESS" "cd /path/to/B_CWD && claude" Enter
+tmux -S "$SOCK" send-keys -t "$SESS" "cd /path/to/B_CWD && claude $B_FLAGS" Enter
 ```
 
 Then **wait for B's idle input box** before sending the first instruction:
