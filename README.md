@@ -1,12 +1,12 @@
 # Homunculus
 
-You have two Claude accounts: a **private, unrestricted** one and a **restricted** one. The restricted account can do real work but must ask for permission before every action — which normally means you sit there pressing keys all day.
+You have two Claude accounts: an **unrestricted** one and a **restricted** one. The restricted account can do real work but must ask for permission before every action — which normally means you sit there pressing keys all day.
 
-Homunculus makes your private Claude (A) the approval gate for your restricted Claude (B). A reads everything B outputs, understands what B is doing, and handles every permission prompt with judgment. You stay in conversation with A. B gets the work done. Nothing dangerous slips through without A — and through A, you — explicitly approving it.
+Homunculus makes your unrestricted Claude (A) the approval gate for your restricted Claude (B). A reads everything B outputs, understands what B is doing, and handles every permission prompt with judgment. You stay in conversation with A. B gets the work done. Nothing dangerous slips through without A — and through A, you — explicitly approving it.
 
 ## Use cases
 
-- **Supervised work with a restricted account.** Your restricted Claude (B) must ask for approval before every action. Homunculus lets it work autonomously while your private Claude (A) acts as the human it needs — approving safe actions, blocking dangerous ones, escalating anything unclear to you.
+- **Supervised work with a restricted account.** Your restricted Claude (B) must ask for approval before every action. Homunculus lets it work autonomously while your unrestricted Claude (A) acts as the human it needs — approving safe actions, blocking dangerous ones, escalating anything unclear to you.
 - **Approval with judgment, not blind clicking.** A reads B's full JSONL transcript to understand *what* B is building and *why* it wants to run each command before deciding. It's not pattern-matching — it's a model making a reasoned call.
 - **Multiple workers.** A can supervise several B sessions in parallel or sequence — independent tasks running concurrently, phased work running one after another.
 - **Full audit trail.** Every decision A makes is logged with a reason. Every screen B showed at the moment A acted is captured.
@@ -32,7 +32,7 @@ claude plugin install homunculus@homunculus
 
 This makes `/homunculus` available in any Claude Code session.
 
-### 2. Set up session A (your private, unrestricted account)
+### 2. Set up session A (your unrestricted account)
 
 This is the Claude session you already use. No changes needed. A must be a full interactive login so it has access to all tools.
 
@@ -59,7 +59,7 @@ Homunculus sources this file when launching B. The token lets B work and be driv
 
 ### 4. Use it
 
-In your private Claude A session:
+In your unrestricted Claude A session:
 
 ```
 /homunculus
