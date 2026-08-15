@@ -1,6 +1,6 @@
 # Homunculus
 
-You have two Claude accounts: an **unrestricted** one and a **restricted** one. The restricted account can do real work but must ask for permission before every action — which normally means you sit there pressing keys all day.
+Assume you have two Claude accounts: an **unrestricted** one and a **restricted** one. The restricted account can do real work but must ask for permission before every action — which normally means you sit there pressing keys all day.
 
 Homunculus makes your unrestricted Claude (A) the approval gate for your restricted Claude (B). A reads everything B outputs, understands what B is doing, and handles every permission prompt with judgment. You stay in conversation with A. B gets the work done. Nothing dangerous slips through without A — and through A, you — explicitly approving it.
 
