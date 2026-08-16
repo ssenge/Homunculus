@@ -131,9 +131,9 @@ You get B's real menu — numbered rows, full model IDs in parentheses, and an e
 ```
 
 Enumerate effort by pressing `Right` and re-capturing until the label repeats — it wraps.
-Match on the word `effort`, not the state glyph (`○ ◐ ● ◈` all occur). On this account the
-cycle is `low → medium → high → max`, with **no `xhigh`** — which is exactly why the list must
-come from B.
+Match on the word `effort`, not the state glyph (`○ ◐ ● ◈ ◉` all occur). Read the levels off
+B; do not assume a fixed set, and do not assume they match A's. One account measured
+`low → medium → high → xHigh → Max`; another may drop levels entirely.
 
 Offer the user *that* list. Apply the choice inside the picker; typing the row number selects
 and closes it, so set effort with `←`/`→` **first**:
@@ -144,6 +144,10 @@ tmux -S "$SOCK" send-keys -t "$SESS" '6'     # then the model row
 ```
 
 Choosing in-session beats relaunching with `--model`, which managed settings can override.
+
+**`Enter` in this picker sets B's account default for all future sessions** — `s` applies the
+choice to this session only. If the user did not ask you to change their default, read the
+menu, then leave with `Esc` and run B on what it already had.
 
 ### 1e. Report ready and stop
 
