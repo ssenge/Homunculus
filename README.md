@@ -1,8 +1,11 @@
-# Homunculus
+# Homunculus - Make Restricted Claude Great Again!
 
 > **homunculus** *(Latin, "little human")*. In alchemical lore, a small artificial being brought to life and directed by its maker to carry out work on its behalf.
 
-Assume you have two Claude accounts. Your **unrestricted** Claude (A) can act freely — no permission prompts — but comes at a high token cost, so you don't want it doing all the heavy lifting. Your **restricted** Claude (B) is cheap and can grind through large tasks, but must ask for permission before every action — which normally means you sit there pressing keys all day.
+Assume you have two Claude accounts: 
+
+1. An **unrestricted** Claude (A, maybe a private account) that can act freely — no permission prompts, full remote control — but comes at a high token cost, so you don't want it doing all the heavy lifting.
+2. A **restricted** Claude (B) that has cheap token cost but must ask for permission before every action — which normally means you sit there pressing keys all day.
 
 Homunculus solves this: **A drives B.** You start B once, then keep working with A as normal. Whenever you want, you hand a task to B — A sends it over and presses yes on every permission prompt, using almost no tokens to do so, until B is done or needs you. B does the heavy lifting cheaply. You stay in conversation with A throughout.
 
