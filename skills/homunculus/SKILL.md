@@ -67,15 +67,28 @@ Launch with **no** `--model` / `--effort` flags — you do not yet know what B's
 
 `send-keys` returns instantly. **Never follow it with a foreground poll loop.** A
 `for i in $(seq 1 120); do … sleep 0.5; done` freezes you for a minute and leaves the user
-staring at a spinner. Wait in the background instead:
+staring at a spinner. Wait in the background instead — capped, and reading the **last
+non-blank line** so scrollback can't false-positive:
 
 ```bash
 # run_in_background: true
-until tmux -S "$SOCK" capture-pane -t "$SESS" -p \
-  | grep -qE 'for shortcuts|I trust this folder'; do sleep 2; done; echo B_UP
+SOCK="$TMPDIR/hom-B1.sock"; SESS="B1"
+for i in $(seq 1 90); do
+  last=$(tmux -S "$SOCK" capture-pane -t "$SESS" -p | grep -v '^[[:space:]]*$' | tail -1)
+  case "$last" in
+    *'Enter to confirm'*) tmux -S "$SOCK" send-keys -t "$SESS" Enter ;;   # either gate
+    *'? for shortcuts'*|*'shift+tab to cycle'*) echo B_UP; exit 0 ;;      # any mode
+  esac
+  sleep 2
+done; echo B_NEVER_READY
 ```
 
-Write down `SOCK`, `SESS` and `B_CWD` — you need them for every later turn.
+Both idle patterns are needed — `? for shortcuts` only renders in manual mode (§3). Matching
+`Enter to confirm` clears **both** startup gates; matching the folder-trust dialog's own text
+misses the managed-settings one and hangs forever.
+
+**Every later Bash call starts a fresh shell — `$SOCK` and `$SESS` do not persist.** Note the
+literal values you chose and re-declare them at the top of every snippet below.
 
 ### 1c. The folder-trust dialog
 
@@ -169,13 +182,35 @@ claude v2.1.233 (2026-08-16).
 
 | Last non-blank line | Means | You do |
 |---|---|---|
-| `esc to interrupt` | B is working | wait |
 | contains `Tab to amend` | **permission prompt** | press `Enter` = yes |
 | contains `Enter to confirm` | **startup gate** | press `Enter` = yes |
 | contains `Esc to cancel` (neither of the above) | **B is asking a real question** | stop, summarize, hand to user |
-| `? for shortcuts` | B is idle | it finished (or stalled) |
+| contains `esc to interrupt` | B is working | wait |
+| contains `? for shortcuts` **or** `shift+tab to cycle` | B is idle | it finished (or stalled) |
 
 **Check them in that order** — the branches overlap, and the last one is the catch-all.
+
+**The idle footer depends on B's permission mode**, and only manual mode contains
+`? for shortcuts`. Measured live against 2.1.233, all four:
+
+```
+default / manual     ⏸ manual mode on · ? for shortcuts · ← 1 agent
+accept edits         ⏵⏵ accept edits on (shift+tab to cycle) · ← 1 agent
+bypass permissions   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent
+plan                 ⏸ plan mode on (shift+tab to cycle) · ← 1 agent
+```
+
+Match `? for shortcuts` alone and you never see an idle B in three of the four modes — you
+sit watching a finished B until you time out, then report a stall that never happened.
+
+Order matters here too: while B works the mode banner **stays** and `esc to interrupt` is
+appended to it — `⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt · ← 1 agent`.
+So the working check must come **before** the idle patterns, or every busy tick in
+accept-edits or plan mode counts as idle and you declare success mid-task.
+
+If B's footer says `bypass permissions on`, B raises **no permission prompts at all** — there
+is nothing for you to gate. That means B's account token was not picked up (§1a). Tell the
+user rather than reporting a clean run.
 
 *Startup gates* are the dialogs claude shows before the input box exists, and there is more
 than one: the folder-trust check (§1c, footer `Enter to confirm · Esc to cancel`) and an org
@@ -217,9 +252,10 @@ options rather than Yes/No:
 **Never auto-answer that one.** It is the user's decision, and it is exactly the case where
 you stop and report.
 
-One trap: **`? for shortcuts` only renders while B's input box is empty.** Leftover text
-removes it and an idle B then matches nothing. Pressing only `Enter` keeps the box empty; if a
-pane matches nothing, clear it with `C-u` and re-capture.
+One trap: **the idle footer only renders while B's input box is empty.** Leftover text removes
+it and an idle B then matches nothing. Pressing only `Enter` keeps the box empty; if a pane
+matches nothing, clear it with `C-u` and re-capture. Claude's own greyed-out follow-up
+suggestion in the box does *not* count as text — the footer still renders.
 
 ---
 
@@ -231,21 +267,28 @@ B asks something real, finishes, or stalls:
 
 ```bash
 # run_in_background: true
+SOCK="$TMPDIR/hom-B1.sock"; SESS="B1"
 idle=0; ticks=0
 while [ "$idle" -lt 3 ]; do
   ticks=$((ticks+1)); [ "$ticks" -gt 900 ] && { echo B_TIMEOUT; break; }   # ~30 min cap
+  tmux -S "$SOCK" has-session -t "$SESS" 2>/dev/null || { echo B_GONE; break; }
   last=$(tmux -S "$SOCK" capture-pane -t "$SESS" -p | grep -v '^[[:space:]]*$' | tail -1)
   case "$last" in
     *'Tab to amend'*)     tmux -S "$SOCK" send-keys -t "$SESS" Enter; idle=0 ;;
     *'Enter to confirm'*) tmux -S "$SOCK" send-keys -t "$SESS" Enter; idle=0 ;;
     *'Esc to cancel'*)    echo B_ASKING; break ;;
-    *'? for shortcuts'*)  idle=$((idle+1)) ;;
+    *'esc to interrupt'*) idle=0 ;;
+    *'? for shortcuts'*|*'shift+tab to cycle'*) idle=$((idle+1)) ;;
     *)                    idle=0 ;;
   esac
   sleep 2
 done
 echo B_STOPPED
 ```
+
+The `esc to interrupt` branch must stay **above** the idle patterns, and the idle branch must
+match both footers — see §3. Getting either wrong is the difference between "B finished" and
+sitting on a finished B until the tick cap.
 
 The tick cap matters: without it a wedged B leaves this loop running for the rest of the
 session. Report `B_TIMEOUT` to the user as a stall, with the last screen.
@@ -267,10 +310,14 @@ allow-rule into B's settings that outlives the session.
 The screen is a control channel; B's JSONL transcript is the content channel. Find it:
 
 ```bash
-# Resolve symlinks — claude names the dir from the REAL path, so /tmp/x lives
-# under -private-tmp-x on macOS, not -tmp-x.
+# Two things to get right or this silently finds nothing:
+#  · resolve symlinks — claude names the dir from the REAL path, so /tmp/x lives
+#    under -private-tmp-x on macOS, not -tmp-x.
+#  · EVERY non-alphanumeric character becomes a dash, not just / and . — a cwd
+#    like ".../e2e_new" lives under ".../e2e-new".
+B_CWD="/path/to/project"
 B_REAL=$(cd "$B_CWD" && pwd -P)
-PROJ=$(printf '%s' "$B_REAL" | sed 's|[/.]|-|g')
+PROJ=$(printf '%s' "$B_REAL" | sed 's|[^A-Za-z0-9]|-|g')
 ls -t "$HOME/.claude/projects/$PROJ"/*.jsonl 2>/dev/null | head -1
 ```
 

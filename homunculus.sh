@@ -22,8 +22,11 @@
 # Every invocation is already a fresh B — new socket, new tmux session, new
 # context. --ephemeral only changes what happens when B stops needing a human.
 #
-# Exit codes:  0 B finished · 1 launch failed · 2 bad usage
-#              3 B is asking a question (needs a human) · 4 timed out
+# Exit codes:  0 B went idle again · 1 B never reached an idle prompt in 120s
+#              2 bad usage · 3 B is asking a question (needs a human) · 4 timed out
+#
+# Exit 0 means B's input box came back, not that B succeeded — B refusing the
+# task or erroring out lands here too. Read the content log for what it did.
 #
 # Valid --model / --effort values depend on B's account and org managed settings.
 # To see what B actually accepts, launch B and open /model — that picker is the
@@ -43,14 +46,16 @@ EPHEMERAL=false
 TIMEOUT=1800
 TASK=""
 
+need_val() { [[ $# -ge 2 ]] || { echo "$1 requires a value" >&2; exit 2; }; }
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --cwd)       B_CWD="$2";    shift 2 ;;
-    --model)     B_MODEL="$2";  shift 2 ;;
-    --effort)    B_EFFORT="$2"; shift 2 ;;
-    --env)       B_ENV="$2";    shift 2 ;;
-    --b-flags)   B_FLAGS="$2";  shift 2 ;;
-    --timeout)   TIMEOUT="$2";  shift 2 ;;
+    --cwd)       need_val "$@"; B_CWD="$2";    shift 2 ;;
+    --model)     need_val "$@"; B_MODEL="$2";  shift 2 ;;
+    --effort)    need_val "$@"; B_EFFORT="$2"; shift 2 ;;
+    --env)       need_val "$@"; B_ENV="$2";    shift 2 ;;
+    --b-flags)   need_val "$@"; B_FLAGS="$2";  shift 2 ;;
+    --timeout)   need_val "$@"; TIMEOUT="$2";  shift 2 ;;
     --ephemeral) EPHEMERAL=true; shift ;;
     -*)          echo "unknown flag: $1" >&2; exit 2 ;;
     *)           TASK="$1";     shift ;;
@@ -58,9 +63,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$TASK" ]] || { echo "usage: $0 [flags] \"instruction for B\"" >&2; exit 2; }
+[[ -d "$B_CWD" ]] || { echo "--cwd is not a directory: $B_CWD" >&2; exit 2; }
+
+# --model/--effort are interpolated unquoted into the command line typed into B's
+# pane, so keep them to shell-safe characters. Checked here, before anything is
+# spawned, so a bad value costs nothing.
+for v in "$B_MODEL" "$B_EFFORT"; do
+  [[ -z "$v" || "$v" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    echo "invalid --model/--effort value: $v" >&2; exit 2; }
+done
 
 # ── Config ─────────────────────────────────────────────────────────────────
-SOCK="${SOCK:-$TMPDIR/homunculus-$$.sock}"
+SOCK="${SOCK:-${TMPDIR:-/tmp}/homunculus-$$.sock}"
 SESS="${SESS:-B}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
@@ -84,7 +98,8 @@ snap() {
 }
 
 cleanup() {
-  [[ -n "$JSONL_PID" ]] && kill "$JSONL_PID" 2>/dev/null || true
+  [[ -n "$JSONL_PID" ]] && { kill -TERM -"$JSONL_PID" 2>/dev/null \
+                          || kill "$JSONL_PID" 2>/dev/null || true; }
   snap
   rm -f "$LOG_DIR/.reader-$TS.py"
   # Persistent mode leaves B alive when it is waiting on the user — killing it
@@ -102,36 +117,38 @@ cleanup() {
   rm -f "$SOCK"
 }
 
-# Wait until the screen matches a pattern (or timeout).
-wait_for() {
-  local pat="$1" secs="${2:-60}" i=0
-  while [[ $i -lt $((secs * 2)) ]]; do
-    screen | grep -qE "$pat" && return 0
-    sleep 0.5
-    ((i++)) || true
-  done
-  return 1
-}
-
 # ── The whole policy ─────────────────────────────────────────────────────────
 # The last non-blank line tells us what B is doing (claude 2.1.233):
 #   "Tab to amend"      → tool permission prompt   → Enter (= 1. Yes)
 #   "Enter to confirm"  → startup gate             → Enter (= 1. Yes)
 #   "Esc to cancel"     → B asking a real question → stop, hand back to the user
-#   "? for shortcuts"   → idle, waiting for input
 #   "esc to interrupt"  → working
+#   idle footer         → idle, waiting for input
 #
 # Startup gates are the dialogs claude shows before the input box exists, and
 # there is more than one: the folder-trust check ("Esc to cancel") and the org
 # managed-settings approval ("Esc to exit"). They differ in the second half of
 # the footer, so match the first half — "Enter to confirm" — and both are covered.
 #
-# The order matters. B's own AskUserQuestion shows "Enter to select · ↑/↓ to
-# navigate · Esc to cancel", so it falls through to the stop branch. Answering it
-# for the user would put words in their mouth.
+# The idle footer depends on B's PERMISSION MODE, and only manual mode contains
+# "? for shortcuts". Measured live, all four:
+#   default/manual     "⏸ manual mode on · ? for shortcuts · ← N agent"
+#   accept edits       "⏵⏵ accept edits on (shift+tab to cycle) · ← N agent"
+#   bypass permissions "⏵⏵ bypass permissions on (shift+tab to cycle) · ← N agent"
+#   plan               "⏸ plan mode on (shift+tab to cycle) · ← N agent"
+# Matching only "? for shortcuts" therefore never sees an idle B in three of the
+# four modes, and the run hangs until its deadline against a perfectly healthy B.
+# Match "shift+tab to cycle" as well.
 #
-# "? for shortcuts" only renders while B's input box is EMPTY; pressing only
-# Enter keeps it that way.
+# The order matters twice over. B's own AskUserQuestion shows "Enter to select ·
+# ↑/↓ to navigate · Esc to cancel", so it falls through to the stop branch;
+# answering it for the user would put words in their mouth. And while B works the
+# mode banner STAYS on the footer with "esc to interrupt" appended — so the
+# working check must come before the idle patterns or every busy tick in accept-
+# edits/plan mode counts as idle and the run reports success mid-task.
+#
+# The idle footer only renders while B's input box is EMPTY; pressing only Enter
+# keeps it that way.
 RESULT="done"          # done | question | timeout
 
 answer_until_idle() {
@@ -142,8 +159,15 @@ answer_until_idle() {
       RESULT="timeout"
       return
     fi
-    pane="$(screen)"
-    last="$(printf '%s' "$pane" | grep -v '^[[:space:]]*$' | tail -1)"
+    # A dead pane reports as "not idle" forever, so say so instead of waiting out
+    # the whole deadline.
+    tmux -S "$SOCK" has-session -t "$SESS" 2>/dev/null || {
+      log "B's tmux session is gone"; RESULT="timeout"; return
+    }
+    # grep exits 1 on an all-blank pane; under pipefail that status becomes the
+    # assignment's, and set -e would abort the script mid-run.
+    pane="$(screen || true)"
+    last="$(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$' | tail -1 || true)"
     case "$last" in
       *'Tab to amend'*)     snap; log "YES — permission prompt"; key Enter; idle=0 ;;
       *'Enter to confirm'*) snap; log "YES — startup gate"; key Enter; idle=0 ;;
@@ -151,7 +175,8 @@ answer_until_idle() {
         snap; log "STOP — B is asking a question; handing back to you"
         RESULT="question"
         return ;;
-      *'? for shortcuts'*)  ((idle++)) || true ;;
+      *'esc to interrupt'*) idle=0 ;;
+      *'? for shortcuts'*|*'shift+tab to cycle'*) ((idle++)) || true ;;
       *)                    idle=0 ;;
     esac
     sleep 2
@@ -162,9 +187,12 @@ answer_until_idle() {
 # ── JSONL content reader (audit trail of what B actually did) ─────────────────
 # claude names the project dir from the RESOLVED cwd, so symlinked paths
 # (/tmp → /private/tmp on macOS) must be resolved or the tail silently no-ops.
+# Every non-alphanumeric character becomes a dash — not just / and . : an
+# underscore does too, so a cwd like ".../e2e_new" lives under ".../e2e-new".
+# Getting this wrong costs nothing visible, it just quietly produces no log.
 cwd_to_project_dir() {
   local real; real="$(cd "$1" 2>/dev/null && pwd -P)" || real="$1"
-  printf '%s' "$real" | sed 's|[/.]|-|g'
+  printf '%s' "$real" | sed 's|[^A-Za-z0-9]|-|g'
 }
 
 # Newest transcript for B's cwd, or empty. Never fails: an empty glob under
@@ -248,8 +276,7 @@ for line in sys.stdin:
     except Exception:
         pass
 PYEOF
-  tail -f -n +1 "$jsonl" 2>/dev/null | python3 -u "$reader" "$CONTENT_LOG" &
-  JSONL_PID=$!
+  tail -F -n +1 "$jsonl" 2>/dev/null | python3 -u "$reader" "$CONTENT_LOG"
 }
 
 # ── Launch B ──────────────────────────────────────────────────────────────────
@@ -271,10 +298,15 @@ for v in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION_ID \
   ENV_STRIP+=" -u $v"
 done
 
+# The command below is TYPED INTO B's PANE and run by that pane's shell, so our
+# own quoting never reaches it — every interpolated value needs quoting for the
+# receiving shell. printf %q does that and works on bash 3.2 (macOS system bash).
+q() { printf '%q' "$1"; }
+
 # B runs under its own account; without this it silently reuses A's.
 SRC_ENV=""
 if [[ -f "$B_ENV" ]]; then
-  SRC_ENV="source '$B_ENV'; "
+  SRC_ENV="source $(q "$B_ENV") && "
   log "AUTH: sourcing $B_ENV for B"
 else
   log "AUTH: no env file at $B_ENV — B will run under the current account"
@@ -282,19 +314,50 @@ fi
 
 CLAUDE_CMD="claude${B_MODEL:+ --model $B_MODEL}${B_EFFORT:+ --effort $B_EFFORT}${B_FLAGS:+ $B_FLAGS}"
 log "LAUNCH $CLAUDE_CMD in $B_CWD"
-tmux -S "$SOCK" send-keys -t "$SESS" "cd '$B_CWD'; ${SRC_ENV}exec $ENV_STRIP $CLAUDE_CMD" Enter
+# && not ; — a failed cd or a broken env file must stop the launch, not silently
+# start B in the wrong directory or under the wrong account.
+tmux -S "$SOCK" send-keys -t "$SESS" \
+  "cd $(q "$B_CWD") && ${SRC_ENV}exec $ENV_STRIP $CLAUDE_CMD" Enter
 
 # Boot: answers the folder-trust dialog on the way, waits for the input box.
 echo "Homunculus: waiting for B to be ready…"
 answer_until_idle 2 120
-[[ "$RESULT" == done ]] || { echo "ERROR: B never became ready ($RESULT)" >&2; exit 1; }
+[[ "$RESULT" == done ]] || {
+  echo "ERROR: B never reached an idle prompt within 120s ($RESULT)" >&2; exit 1; }
 log "B is ready"
-start_jsonl_reader   # B creates its transcript dir as part of coming up
+
+# Homunculus exists to press yes on permission prompts. If B came up with them
+# turned off there are none to press — B is running unsupervised and every
+# "approved" count in the log would be zero. Say so rather than report success.
+if screen | grep -q 'bypass permissions on'; then
+  log "WARNING: B is in bypass-permissions mode — it will raise no permission"
+  log "WARNING: prompts, so Homunculus is not gating anything. Check $B_ENV."
+fi
 
 # ── Send the task, then answer everything until B is done ─────────────────────
 log "INSTRUCT: $TASK"
+# Wait for B to visibly react before watching for idle, or the idle B we are
+# still looking at counts as "finished". Diff the pane rather than polling for
+# "esc to interrupt": a fast reply holds that footer for a second or two and
+# slips between two polls, which cost a flat 30s wait on every short task. The
+# submitted task lands in the transcript and STAYS there, so a diff cannot be
+# missed no matter how quickly B answers.
+PRE_PANE="$(screen || true)"
 say "$TASK"
-wait_for 'esc to interrupt' 30 || true   # let B start before we watch for idle
+for _ in $(seq 1 40); do
+  [[ "$(screen || true)" != "$PRE_PANE" ]] && break
+  sleep 0.5
+done
+
+# Only now is there a message for claude to write a transcript for. Backgrounded
+# in its own process group: discovery polls for up to 30s, and blocking here would
+# leave B sitting at an unanswered permission prompt for that whole time. The
+# group makes cleanup able to reap the tail and the python reader together —
+# `$!` on a pipeline names only its last element.
+set -m
+start_jsonl_reader &
+JSONL_PID=$!
+set +m
 
 echo "Homunculus: answering permission prompts (Ctrl-C to abort)…"
 answer_until_idle 3 "$TIMEOUT"

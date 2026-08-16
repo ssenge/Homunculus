@@ -22,7 +22,7 @@ A watches B's terminal live and reads its full transcript, so it always knows wh
 - **Unattended work on a restricted account.** B must ask for approval before every action, and its account is not allowed to turn that off. Homunculus answers the prompts so B can work through a long task without you sitting on the keyboard.
 - **You watch, at your own pace.** A reads B's full transcript, so you can ask "what is B doing?" at any point and get a real answer instead of scrolling a terminal. Redirect or stop it whenever you like.
 - **Multiple workers.** A can drive several B sessions in parallel or in sequence — independent tasks running concurrently, phased work running one after another.
-- **Full audit trail.** Every prompt answered is logged alongside exactly what B showed on screen at that moment, plus a readable log of every tool call B made.
+- **Audit trail (standalone mode).** `homunculus.sh` logs every prompt it answers alongside exactly what B showed on screen at that moment, plus — when `python3` is present — a readable log of every tool call B made. The `/homunculus` skill writes no log files; there, B's own JSONL transcript is the record.
 
 ## Example
 
@@ -88,6 +88,8 @@ A asks which directory B should work in, starts B there under your restricted ac
 
 That's all `/homunculus` does. It does not ask what to build.
 
+> If you installed the plugin before v0.3.0, run `claude plugin update homunculus@homunculus` first. Older versions shipped a hardcoded model list and a permission-screening policy that this README does not describe.
+
 ### 2. Work as usual
 
 By default A answers you itself, exactly as before. B sits idle in the background costing nothing.
@@ -114,11 +116,22 @@ Ask for **ephemeral** mode — "use a fresh B each time" — and A kills B after
 
 ## Standalone mode
 
-To run the key-presser on its own, with no A in the loop:
+To run the key-presser on its own, with no A in the loop, clone the repo — the script is not on your `PATH` after a plugin install, and it writes its logs next to itself:
 
 ```bash
+git clone https://github.com/ssenge/Homunculus && cd Homunculus
 bash homunculus.sh --cwd /path/to/project --model claude-haiku-4-5 --effort high "implement the auth module"
 ```
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--cwd PATH` | B's working directory | current directory |
+| `--model M` | passed to `claude` as `--model` | account default |
+| `--effort L` | passed to `claude` as `--effort` | account default |
+| `--env FILE` | env file holding B's account token | `~/.claude-restricted.env` |
+| `--b-flags "…"` | extra flags passed verbatim to `claude` | none |
+| `--timeout SECS` | give up if B is still going after this | `1800` |
+| `--ephemeral` | tear B down even when it stops on a question | off |
 
 It sources `~/.claude-restricted.env` automatically (override with `--env FILE`), answers every permission prompt, and exits when B finishes. If B asks a real question it stops and **leaves the session alive** so you can answer it yourself — it prints the exact `attach` command to use:
 
@@ -140,11 +153,13 @@ The exit code tells your loop what happened:
 
 | Code | Meaning |
 |---|---|
-| `0` | B finished the task |
-| `1` | B failed to launch |
+| `0` | B went idle again — the task finished, or B stopped early (check the content log) |
+| `1` | B did not reach a recognisable idle prompt within 120s of launch |
 | `2` | bad usage |
 | `3` | B is asking a question — needs a human |
 | `4` | B exceeded `--timeout` (default 1800s) |
+
+Exit `0` means B's input box came back, not that B succeeded. B refusing the task, erroring, or hitting a context limit all land here too — read the content log to see what it actually did.
 
 ## Choosing a model and effort
 
