@@ -38,13 +38,11 @@ Then you keep going. B is still up for the next task.
 
 ## Installation
 
-Requires the `claude` CLI and `tmux` (≥ 3.0). On macOS:
+Requires the `claude` CLI, plus:
 
 ```bash
-brew install tmux
+brew install tmux python
 ```
-
-`python3` is **optional** — it only powers the readable log of what B did. Without it everything still runs, you just don't get that log. macOS ships a `python3`; if yours is missing, `brew install python`.
 
 ### 1. Install the Homunculus plugin
 
