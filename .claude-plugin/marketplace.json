@@ -8,7 +8,8 @@
     {
       "name": "homunculus",
       "source": "./",
-      "description": "Supervisor skill: lets Claude A launch, steer, and supervise Claude B worker sessions via tmux."
+      "description": "Lets Claude A start a Claude B worker session via tmux and delegate tasks to it, pressing yes on every permission prompt so B never stalls."
     }
-  ]
+  ],
+  "description": "Homunculus — drive a restricted Claude worker session from an unrestricted one."
 }
