@@ -142,22 +142,6 @@ The exit code tells your loop what happened:
 | `3` | B is asking a question — needs a human |
 | `4` | B exceeded `--timeout` (default 1800s) |
 
-This is the shape a Ralph-style loop wants: fresh context per iteration, state carried between passes in Markdown rather than in the worker's head.
-
-```bash
-for i in $(seq 1 20); do
-  bash homunculus.sh --ephemeral --cwd "$PROJECT" "$(cat PROMPT.md)"
-  case $? in
-    0) echo "iteration $i done" ;;
-    3) echo "iteration $i needs a human"; break ;;
-    4) echo "iteration $i timed out";     break ;;
-    *) echo "iteration $i failed";        break ;;
-  esac
-done
-```
-
-Check the exit code with `case`, not `&&`/`||` chains — the codes carry meaning beyond pass/fail, and a `||` branch swallows `4` as if it were `3`.
-
 ## Choosing a model and effort
 
 Which values `--model` and `--effort` accept depends on B's account and your org's managed settings — an org can pin a model or drop an effort level entirely. There is no CLI that lists them. To see B's real menu, launch B and open `/model`; that picker is the authoritative list.
