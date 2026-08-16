@@ -175,6 +175,13 @@ newest_jsonl() {
 }
 
 start_jsonl_reader() {
+  # Optional: only the readable content log needs python3. Everything else works
+  # without it, so say so and move on rather than failing the run.
+  command -v python3 >/dev/null 2>&1 || {
+    log "CONTENT: python3 not found; skipping the readable log (run is unaffected)"
+    return
+  }
+
   local proj_path="$HOME/.claude/projects/$(cwd_to_project_dir "$B_CWD")"
 
   # Newest by mtime, but never the one that was already newest before we launched.
