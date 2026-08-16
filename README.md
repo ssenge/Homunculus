@@ -53,7 +53,16 @@ claude plugin install homunculus@homunculus
 
 This makes `/homunculus` available in any Claude Code session.
 
-### 2. Set up session A (your unrestricted account)
+### 2. Update the Homunculus plugin
+
+```bash
+claude plugin marketplace update homunculus
+claude plugin update homunculus@homunculus
+```
+
+The marketplace refresh comes first — without it `update` only sees the catalog it already cached. Restart Claude Code afterwards to apply.
+
+### 3. Set up session A (your unrestricted account)
 
 This is the Claude session you already use. No changes needed — just confirm you're logged in with your unrestricted account:
 
@@ -61,7 +70,7 @@ This is the Claude session you already use. No changes needed — just confirm y
 claude auth status
 ```
 
-### 3. Set up session B (your restricted account)
+### 4. Set up session B (your restricted account)
 
 Get a long-lived token for your restricted account:
 
