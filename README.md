@@ -4,28 +4,34 @@
 
 Assume you have two Claude accounts. Your **unrestricted** Claude (A) can act freely — no permission prompts — but comes at a high token cost, so you don't want it doing all the heavy lifting. Your **restricted** Claude (B) is cheap and can grind through large tasks, but must ask for permission before every action — which normally means you sit there pressing keys all day.
 
-Homunculus solves this: **A steers B.** A reads everything B does, understands it, and handles every permission prompt with judgment — using almost no tokens to do so. B does the heavy lifting cheaply. You stay in conversation with A. Nothing dangerous slips through without A — and through A, you — explicitly approving it.
+Homunculus solves this: **A drives B.** You start B once, then keep working with A as normal. Whenever you want, you hand a task to B — A sends it over and presses yes on every permission prompt, using almost no tokens to do so, until B is done or needs you. B does the heavy lifting cheaply. You stay in conversation with A throughout.
 
 B is the homunculus: the worker your unrestricted Claude creates and directs.
 
 ![Homunculus diagram](diagram.png)
 
-A watches B's terminal live and reads its full transcript, so it always knows what B is doing. When B stops at a permission prompt, A steps in and answers it. B runs completely normally and never needs to know it is being supervised.
+A watches B's terminal live and reads its full transcript, so it always knows what B is doing. When B stops at a permission prompt, A presses `Enter` and B carries on. When B asks a genuine question, A stops and brings it to you. B runs completely normally and never needs to know anything is driving it.
+
+> **Homunculus approves every permission prompt.** It is a key-presser, not a safety mechanism. B's restricted account cannot use `--dangerously-skip-permissions`, so Homunculus presses the key from outside — which amounts to running B unrestricted. Only give B tasks you would let it run unattended.
 
 ## Use cases
 
-- **Supervised work with a restricted account.** B must ask for approval before every action. Homunculus lets it work autonomously while A acts as the human it needs — approving safe actions, blocking dangerous ones, escalating anything unclear to you.
-- **Approval with judgment, not blind clicking.** A reads B's full transcript to understand *what* B is building and *why* it wants to run each command before deciding. It's not pattern-matching — it's a model making a reasoned call.
-- **Multiple workers.** A can supervise several B sessions in parallel or in sequence — independent tasks running concurrently, phased work running one after another.
-- **Full audit trail.** Every decision A makes is logged with a reason, alongside exactly what B showed on screen at that moment.
+- **Unattended work on a restricted account.** B must ask for approval before every action, and its account is not allowed to turn that off. Homunculus answers the prompts so B can work through a long task without you sitting on the keyboard.
+- **You watch, at your own pace.** A reads B's full transcript, so you can ask "what is B doing?" at any point and get a real answer instead of scrolling a terminal. Redirect or stop it whenever you like.
+- **Multiple workers.** A can drive several B sessions in parallel or in sequence — independent tasks running concurrently, phased work running one after another.
+- **Full audit trail.** Every prompt answered is logged alongside exactly what B showed on screen at that moment, plus a readable log of every tool call B made.
 
 ## Example
 
-You're in a Claude A session planning a feature. Once you've aligned, you say:
+At the start of a session you run `/homunculus` and point B at your project. A confirms B is up, and you carry on planning a feature with A as usual — B is just sitting there.
 
-> "Use the homunculus skill to implement this."
+Once you've aligned on the plan, you say:
 
-A spins up a B session under your restricted account, sends it the brief, and starts watching. When B wants to run a shell command, A reads what it is, checks it against the plan, and approves or denies it. If B tries a force push, writes outside the project, or runs a `curl | sh`, A blocks it and tells B to take a different approach. You only get pulled in when A genuinely doesn't know what to do.
+> "Use B to implement this."
+
+A sends B the brief and starts watching. Every time B stops for permission, A presses yes and B keeps going. When B is done, A tells you what it changed. If B instead asks something — "should this return 404 or 410?" — A stops there, shows you the question, and waits for your call.
+
+Then you keep going. B is still up for the next task.
 
 ## Installation
 
@@ -65,33 +71,92 @@ echo 'export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat…' > ~/.claude-restricted.env
 
 ## Usage
 
-Invoke Homunculus from your unrestricted Claude A session in either of two ways.
-
-**Option 1 — slash command.** A loads the skill, then asks you what to build, in which directory, and which model and effort level to use for B:
+### 1. Start B
 
 ```
 /homunculus
 ```
 
-**Option 2 — one message.** Give A everything up front and it launches B without follow-up questions:
+A asks which directory B should work in, starts B there under your restricted account, reads B's own `/model` menu to see what that account actually allows, and offers you only those model and effort options. Then it tells you B is ready **and goes back to normal work.**
 
-> "Use the homunculus skill to implement the auth module in `/path/to/project`. Run B on model `claude-haiku-4-5-20251001` with effort `high`."
+That's all `/homunculus` does. It does not ask what to build.
 
-In either case, A then:
+### 2. Work as usual
 
-1. Launches a B session using your restricted account's token
-2. Sends B your instruction
-3. Watches B's output continuously via its live transcript
-4. On every permission prompt, reads what B wants to do, decides against your plan, and approves or denies it
-5. Surfaces the question to you whenever it's unsure, instead of guessing
-6. Reports what was done and closes the session when B is finished
+By default A answers you itself, exactly as before. B sits idle in the background costing nothing.
 
-You stay in conversation with A throughout — redirect, add context, or override any decision at any time.
+### 3. Hand a task to B when you want to
 
-## Autonomous mode
+> "Use B to migrate the auth module to the new token format."
 
-To run B rules-only, with no A in the loop:
+A sends the task to B and lets it run, pressing yes on every permission prompt so B never stalls. It keeps going until one of three things happens:
+
+| B... | A... |
+|---|---|
+| finishes the task | summarizes what B changed |
+| asks a real question | stops, shows you the question and B's options |
+| stalls | says so, and shows the last screen |
+
+Either way A comes back with **what B actually did** — read from B's transcript, not a restatement of the task — and lets you decide how to continue. It never answers B's questions on your behalf, and never hands B more work unprompted.
+
+### Persistent vs ephemeral
+
+By default B **stays alive between tasks**, keeping its context, so you can keep delegating to the same worker.
+
+Ask for **ephemeral** mode — "use a fresh B each time" — and A kills B after every task and starts a new one for the next. That's the mode for outer loops whose premise is a clean context per iteration, with state carried between passes in files rather than in the worker's head.
+
+## Standalone mode
+
+To run the key-presser on its own, with no A in the loop:
 
 ```bash
-bash homunculus.sh --cwd /path/to/project --model claude-haiku-4-5-20251001 --effort high "implement the auth module"
+bash homunculus.sh --cwd /path/to/project --model claude-haiku-4-5 --effort high "implement the auth module"
 ```
+
+It sources `~/.claude-restricted.env` automatically (override with `--env FILE`), answers every permission prompt, and exits when B finishes. If B asks a real question it stops and **leaves the session alive** so you can answer it yourself — it prints the exact `attach` command to use:
+
+```
+Homunculus: B is asking a question — see the screen below.
+  Answer it with: tmux -S $TMPDIR/homunculus-8601.sock attach -t B
+```
+
+## Loop mode
+
+Every invocation of `homunculus.sh` is already a fresh worker — new socket, new session, new context. Add `--ephemeral` and it tears B down even when B stops on a question, so a long-running outer loop never accumulates panes:
+
+```bash
+bash homunculus.sh --ephemeral --timeout 900 --cwd "$PROJECT" \
+  --model claude-haiku-4-5 --effort high "$(cat next-task.md)"
+```
+
+The exit code tells your loop what happened:
+
+| Code | Meaning |
+|---|---|
+| `0` | B finished the task |
+| `1` | B failed to launch |
+| `2` | bad usage |
+| `3` | B is asking a question — needs a human |
+| `4` | B exceeded `--timeout` (default 1800s) |
+
+This is the shape a Ralph-style loop wants: fresh context per iteration, state carried between passes in Markdown rather than in the worker's head.
+
+```bash
+for i in $(seq 1 20); do
+  bash homunculus.sh --ephemeral --cwd "$PROJECT" "$(cat PROMPT.md)"
+  case $? in
+    0) echo "iteration $i done" ;;
+    3) echo "iteration $i needs a human"; break ;;
+    4) echo "iteration $i timed out";     break ;;
+    *) echo "iteration $i failed";        break ;;
+  esac
+done
+```
+
+Check the exit code with `case`, not `&&`/`||` chains — the codes carry meaning beyond pass/fail, and a `||` branch swallows `4` as if it were `3`.
+
+## Choosing a model and effort
+
+Which values `--model` and `--effort` accept depends on B's account and your org's managed settings — an org can pin a model or drop an effort level entirely. There is no CLI that lists them. To see B's real menu, launch B and open `/model`; that picker is the authoritative list.
+
+In skill mode A reads that picker for you and offers only what B actually supports.

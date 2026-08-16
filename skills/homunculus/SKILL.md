@@ -1,106 +1,283 @@
 ---
 name: homunculus
-description: "Spin up and supervise a Claude B worker session via tmux — delegate tasks, approve permission prompts with judgment, watch B's output, relay context."
+description: "Start a Claude B worker session via tmux and keep it available. Delegate a task to B when the user asks, pressing yes on every permission prompt, and report back when B finishes or gets stuck."
 trigger: /homunculus
 ---
 
-# Homunculus skill — spin up and supervise a Claude B worker session
+# Homunculus — start a worker session B, delegate to it on request
 
-You are now acting as **supervisor A**. Your job is to launch a restricted Claude B session
-inside tmux, delegate work to it, handle its permission prompts with judgment, watch its
-JSONL transcript to understand what it is doing, and relay anything back to the user that B
-cannot resolve on its own.
+## The whole model
 
-Use this skill any time the user wants to delegate implementation work to a worker Claude
-session, or when the task is large/risky enough that you want B to do the execution while
-you retain approval authority over every action.
+**`/homunculus` starts B and nothing else.** You bring up a Claude B session in a tmux pane,
+confirm it is idle and waiting, tell the user it's ready, and go back to normal work.
 
----
+After that, exactly two things happen:
 
-## 1. Session tracking
+1. **Default — you work yourself.** B sits idle. You answer the user, edit files, run
+   commands, all as usual. Do not involve B and do not mention it.
+2. **The user says "use B" / "use homunculus" / "let B do this"** — you delegate that task to
+   B, press yes on every permission prompt B raises, and let it run until either it finishes
+   or it gets stuck. Then you **summarize what happened on B's side and let the user decide
+   how to continue**.
 
-Keep a mental (or written) record of each active B session:
+You never decide on your own to hand work to B. The user asks, or B stays idle.
 
-```
-SESSION_ID  : short label you assign (e.g. "B1", "auth-worker")
-SOCK        : tmux socket path  ($TMPDIR/hom-<SESSION_ID>.sock)
-SESS        : tmux session name (same as SESSION_ID)
-B_CWD       : working directory for B
-JSONL       : path to B's live JSONL transcript (discovered after launch)
-```
-
-You can supervise multiple sessions; check each one in turn.
+By default B **stays alive between tasks**, keeping its context for the next delegation. If the
+user wants a fresh worker every time — they'll say "ephemeral", "fresh B each time", or that
+they're driving a loop — kill B after each task instead and start a new one next time. See §7.
 
 ---
 
-## 2. Launching B
+## 1. Starting B (`/homunculus`)
 
-Before launching, ask the user (or infer from context) which model and flags B should use.
-Common choices:
+### 1a. Two things that break the launch if you skip them
 
-Both model and effort are CLI flags passed directly to `claude`:
-
-| Setting | Flag |
-|---|---|
-| Cheapest model | `--model claude-haiku-4-5-20251001` |
-| Balanced model | `--model claude-sonnet-5` |
-| Most capable model | `--model claude-opus-5` |
-| Effort | `--effort low` / `medium` / `high` / `xhigh` / `max` |
-
-Default (no flags) uses Claude Code's own defaults.
-
-Run these Bash commands in order:
+**Strip your own session environment.** The tmux server you spawn inherits *your* Claude Code
+session variables. B inherits them too, concludes it is a nested child session, and never
+renders its TUI — the pane stays blank forever and every readiness check times out. This is
+the single most common cause of "B never gets ready".
 
 ```bash
-# 1. Choose a session ID (short, no spaces)
-SESSION_ID="B1"   # or "auth-worker", etc.
+STRIP="env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ID \
+ -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN \
+ -u CLAUDE_CODE_BRIDGE_SESSION_ID -u CLAUDE_CODE_EXECPATH -u CLAUDE_PID -u CLAUDE_EFFORT"
+```
+
+**Source B's account token.** Without it B runs under your account, which defeats the point.
+It lives in `~/.claude-restricted.env`. If that file is missing, say so instead of silently
+running B as yourself.
+
+### 1b. Launch
+
+Ask the user only what you cannot infer: **which directory B should work in**. Then:
+
+```bash
+SESSION_ID="B1"                       # short, no spaces
 SOCK="$TMPDIR/hom-${SESSION_ID}.sock"
 SESS="$SESSION_ID"
-B_FLAGS="--model claude-haiku-4-5-20251001 --effort high"   # adjust or leave empty
+B_CWD="/path/to/project"
 
-# 2. Start tmux pane (wide to prevent line-wrap)
 tmux -S "$SOCK" new-session -d -s "$SESS" -x 220 -y 50
-
-# 3. Launch Claude B in B's working directory
-tmux -S "$SOCK" send-keys -t "$SESS" "cd /path/to/B_CWD && claude $B_FLAGS" Enter
+tmux -S "$SOCK" send-keys -t "$SESS" \
+  "cd '$B_CWD'; source ~/.claude-restricted.env; exec $STRIP claude" Enter
 ```
 
-Then **wait for B's idle input box**, optionally set effort, then send the task:
+Launch with **no** `--model` / `--effort` flags — you do not yet know what B's account allows
+(§1d).
+
+`send-keys` returns instantly. **Never follow it with a foreground poll loop.** A
+`for i in $(seq 1 120); do … sleep 0.5; done` freezes you for a minute and leaves the user
+staring at a spinner. Wait in the background instead:
 
 ```bash
-# Poll until claude's idle status bar appears (up to 60 s)
-# Verified: idle = "? for shortcuts" in the bottom status line (claude v2.1.233)
-for i in $(seq 1 120); do
-  tmux -S "$SOCK" capture-pane -t "$SESS" -p | grep -q '? for shortcuts' && echo READY && break
-  sleep 0.5
-done
+# run_in_background: true
+until tmux -S "$SOCK" capture-pane -t "$SESS" -p \
+  | grep -qE 'for shortcuts|I trust this folder'; do sleep 2; done; echo B_UP
 ```
 
-Once you see `READY`, send the task:
+Write down `SOCK`, `SESS` and `B_CWD` — you need them for every later turn.
+
+### 1c. The folder-trust dialog
+
+On B's first launch in a directory it does not trust, this appears **instead of** the input
+box, so `? for shortcuts` never shows:
+
+```
+ Quick safety check: Is this a project you created or one you trust?
+ ❯ 1. Yes, I trust this folder
+   2. No, exit
+ Enter to confirm · Esc to cancel
+```
+
+Press `Enter`, then keep waiting for the input box. It is not the only startup gate — see §3
+for the managed-settings one, which uses a different footer and will hang your wait if you
+only match this dialog.
+
+### 1d. Model and effort — ask B, never assume
+
+**There is no fixed list.** B's account, subscription and org managed settings decide what is
+available, and an org can pin a model outright — this user's org prints
+`Managed settings pins Sonnet 4.6 — that applies on restart`. There is no CLI query for it.
+The authoritative list is B's own `/model` picker:
 
 ```bash
-tmux -S "$SOCK" send-keys -t "$SESS" -l "your instruction here"
+tmux -S "$SOCK" send-keys -t "$SESS" -l '/model'
+tmux -S "$SOCK" send-keys -t "$SESS" Enter
+sleep 3
+tmux -S "$SOCK" capture-pane -t "$SESS" -p
+```
+
+You get B's real menu — numbered rows, full model IDs in parentheses, and an effort row:
+
+```
+     1. Default (recommended)  Sonnet 4.6 · Efficient for routine tasks
+     6. Haiku 4.5              Fastest for quick answers (claude-haiku-4-5)
+     8. Opus 5                 Best for everyday, complex tasks (claude-opus-5)
+   ● High effort (default) ←/→ to adjust
+   Enter to set as default · s to use this session only · Esc to cancel
+```
+
+Enumerate effort by pressing `Right` and re-capturing until the label repeats — it wraps.
+Match on the word `effort`, not the state glyph (`○ ◐ ● ◈` all occur). On this account the
+cycle is `low → medium → high → max`, with **no `xhigh`** — which is exactly why the list must
+come from B.
+
+Offer the user *that* list. Apply the choice inside the picker; typing the row number selects
+and closes it, so set effort with `←`/`→` **first**:
+
+```bash
+tmux -S "$SOCK" send-keys -t "$SESS" Right   # effort to the chosen level
+tmux -S "$SOCK" send-keys -t "$SESS" '6'     # then the model row
+```
+
+Choosing in-session beats relaunching with `--model`, which managed settings can override.
+
+### 1e. Report ready and stop
+
+Tell the user B is up, which directory, model and effort. Then **go back to normal work**.
+Do not ask what B should build — the user will say when they want B used.
+
+---
+
+## 2. Delegating a task to B
+
+Only when the user asks for it. Send the task:
+
+```bash
+tmux -S "$SOCK" send-keys -t "$SESS" -l "the full task, with enough context to act on"
 tmux -S "$SOCK" send-keys -t "$SESS" Enter
 ```
 
----
-
-## 3. Finding B's JSONL transcript (content channel)
-
-After launching B, compute the project directory name and find the newest JSONL:
+Multi-line instructions need bracketed paste, or the newlines submit early:
 
 ```bash
-B_CWD="/path/to/B_CWD"
-PROJ=$(printf '%s' "$B_CWD" | sed 's|[/.]|-|g')   # e.g. -Users-foo-src-MyProject
-PROJ_DIR="$HOME/.claude/projects/$PROJ"
-# Wait for the file to appear, then grab it:
-ls -t "$PROJ_DIR"/*.jsonl 2>/dev/null | head -1
+printf '%s' "line one
+line two" | tmux -S "$SOCK" load-buffer -
+tmux -S "$SOCK" paste-buffer -p -t "$SESS"
+tmux -S "$SOCK" send-keys -t "$SESS" Enter
 ```
 
-Read new JSONL lines periodically to understand what B is building:
+B has none of your conversation. Restate what it needs — paths, constraints, what "done"
+means.
+
+---
+
+## 3. Reading the screen — what B is showing you
+
+The bottom status bar (last non-blank line) is the state signal. Verified end-to-end against
+claude v2.1.233 (2026-08-16).
+
+| Last non-blank line | Means | You do |
+|---|---|---|
+| `esc to interrupt` | B is working | wait |
+| contains `Tab to amend` | **permission prompt** | press `Enter` = yes |
+| contains `Enter to confirm` | **startup gate** | press `Enter` = yes |
+| contains `Esc to cancel` (neither of the above) | **B is asking a real question** | stop, summarize, hand to user |
+| `? for shortcuts` | B is idle | it finished (or stalled) |
+
+**Check them in that order** — the branches overlap, and the last one is the catch-all.
+
+*Startup gates* are the dialogs claude shows before the input box exists, and there is more
+than one: the folder-trust check (§1c, footer `Enter to confirm · Esc to cancel`) and an org
+managed-settings approval (footer `Enter to confirm · Esc to exit`):
+
+```
+ Managed settings require approval
+ Settings requiring approval:
+   · hooks
+ ❯ 1. Yes, I trust these settings
+   2. No, exit Claude Code
+ Enter to confirm · Esc to exit
+```
+
+They differ in the second half of the footer, so match the first half and both are covered.
+Miss one and B never reaches its input box — it just sits there until you time out.
+
+*Permission prompts* carry `Tab to amend` and look like:
+
+```
+ Do you want to create z.txt?          ← or "Do you want to proceed?"
+ ❯ 1. Yes
+   2. Yes, allow all edits during this session
+   3. No
+ Esc to cancel · Tab to amend
+```
+
+A genuine question from B (its AskUserQuestion tool) has no `Tab to amend` and shows domain
+options rather than Yes/No:
+
+```
+ ☐ Indentation
+ Do you prefer tabs or spaces for indentation?
+ ❯ 1. Tabs
+   2. Spaces
+ Enter to select · ↑/↓ to navigate · Esc to cancel
+```
+
+**Never auto-answer that one.** It is the user's decision, and it is exactly the case where
+you stop and report.
+
+One trap: **`? for shortcuts` only renders while B's input box is empty.** Leftover text
+removes it and an idle B then matches nothing. Pressing only `Enter` keeps the box empty; if a
+pane matches nothing, clear it with `C-u` and re-capture.
+
+---
+
+## 4. The run loop — yes on permissions, stop on questions
+
+Answering permission prompts is mechanical, so let bash do it in the background while you stay
+free to talk to the user. This presses `Enter` on permission prompts only, and exits the moment
+B asks something real, finishes, or stalls:
 
 ```bash
-tail -n 50 /path/to/session.jsonl | python3 -c "
+# run_in_background: true
+idle=0; ticks=0
+while [ "$idle" -lt 3 ]; do
+  ticks=$((ticks+1)); [ "$ticks" -gt 900 ] && { echo B_TIMEOUT; break; }   # ~30 min cap
+  last=$(tmux -S "$SOCK" capture-pane -t "$SESS" -p | grep -v '^[[:space:]]*$' | tail -1)
+  case "$last" in
+    *'Tab to amend'*)     tmux -S "$SOCK" send-keys -t "$SESS" Enter; idle=0 ;;
+    *'Enter to confirm'*) tmux -S "$SOCK" send-keys -t "$SESS" Enter; idle=0 ;;
+    *'Esc to cancel'*)    echo B_ASKING; break ;;
+    *'? for shortcuts'*)  idle=$((idle+1)) ;;
+    *)                    idle=0 ;;
+  esac
+  sleep 2
+done
+echo B_STOPPED
+```
+
+The tick cap matters: without it a wedged B leaves this loop running for the rest of the
+session. Report `B_TIMEOUT` to the user as a stall, with the last screen.
+
+**Press yes on every permission prompt.** Do not read the command to judge whether it is safe,
+do not send `3` (No), do not stop because a prompt mentions `sudo`, `rm -rf`, or a force push.
+The user chose the task; B carries it out; you unblock it. Screening prompts by pattern blocks
+legitimate work while stopping nothing that matters.
+
+Avoid `2` ("Yes, and don't ask again") — not for safety, but because it writes a persistent
+allow-rule into B's settings that outlives the session.
+
+**Never run this loop in the foreground.** It freezes you for the whole run.
+
+---
+
+## 5. Reading what B actually did (for your summary)
+
+The screen is a control channel; B's JSONL transcript is the content channel. Find it:
+
+```bash
+# Resolve symlinks — claude names the dir from the REAL path, so /tmp/x lives
+# under -private-tmp-x on macOS, not -tmp-x.
+B_REAL=$(cd "$B_CWD" && pwd -P)
+PROJ=$(printf '%s' "$B_REAL" | sed 's|[/.]|-|g')
+ls -t "$HOME/.claude/projects/$PROJ"/*.jsonl 2>/dev/null | head -1
+```
+
+Read it to understand what B built:
+
+```bash
+tail -n 80 /path/to/session.jsonl | python3 -c "
 import sys, json
 for line in sys.stdin:
     try:
@@ -120,148 +297,80 @@ for line in sys.stdin:
 "
 ```
 
-**Use this for comprehension.** You are a model reading text — read the transcript, don't grep it.
+You are a model reading text — read the transcript, don't grep it for keywords.
 
 ---
 
-## 4. Reading B's current screen (control channel)
+## 6. Reporting back — the point of the whole thing
+
+When the loop exits, always come back to the user with:
+
+1. **What B did** — the actual changes, from the transcript, not a restatement of the task.
+2. **Why it stopped** — finished / asked a question / stalled.
+3. **The question verbatim, with B's options**, if it stopped on one.
+4. **What you'd do next**, then let the user choose.
+
+Then wait. Do not answer B's question for the user, and do not start the next chunk of work on
+B unprompted.
+
+To continue after the user decides, answer B in its own pane and resume the loop:
 
 ```bash
-tmux -S "$SOCK" capture-pane -t "$SESS" -p
+tmux -S "$SOCK" send-keys -t "$SESS" '2'      # pick an option, or
+tmux -S "$SOCK" send-keys -t "$SESS" -l "use spaces"; tmux -S "$SOCK" send-keys -t "$SESS" Enter
 ```
 
-`$(capture-pane)` strips trailing newlines (bash command substitution), so the output ends
-at the last non-blank line. Check the **last non-blank lines** for state — not a fixed
-`tail -N` of the full 50-row buffer.
+If B went idle without finishing, that is a stall — say so plainly and show the last screen
+rather than claiming success.
 
 ---
 
-## 5. State classification — what is B doing right now?
+## 7. Persistent vs ephemeral B
 
-Verified against claude v2.1.233 via live capture-pane (2026-08-15).
+**Persistent (default).** B stays alive between tasks. The user delegates, you report back,
+B keeps its context, and the next "use B" lands in the same session. Cheapest, and B remembers
+what it just did.
 
-The bottom status bar (last non-blank line) is the reliable state signal:
+**Ephemeral.** B is killed after every task and the next delegation starts a brand-new
+session. Use it when the user asks for it — "fresh B each time", "ephemeral mode", or when
+they are driving an outer loop (Ralph-style) whose whole premise is a clean context per
+iteration, with state carried between passes in files rather than in B's head.
 
-| State | Signal | Bottom status bar |
-|---|---|---|
-| **idle** | B is waiting for your next instruction | `? for shortcuts` |
-| **working** | B is running a tool or thinking | `esc to interrupt` |
-| **permission-prompt** | B needs approval before acting | `Esc to cancel · Tab to amend` |
-
-Quick bash check:
+In ephemeral mode, after reporting the result:
 
 ```bash
-STATUS=$(tmux -S "$SOCK" capture-pane -t "$SESS" -p | grep -v '^[[:space:]]*$' | tail -1)
-if   echo "$STATUS" | grep -q 'Esc to cancel';    then echo permission
-elif echo "$STATUS" | grep -q 'esc to interrupt'; then echo working
-elif echo "$STATUS" | grep -q '? for shortcuts';  then echo idle
-else echo unknown
-fi
+tmux -S "$SOCK" kill-server 2>/dev/null; rm -f "$SOCK"   # kill-server leaves the socket file
 ```
 
-The permission prompt block appears below the separator line and looks like:
+then launch a fresh B (§1) on the next delegation. Two things to keep right:
 
-```
- Bash command
-   <command here>
-   <description>
+- **Never pass `--continue` or `--resume`.** A fresh session means fresh context; resuming
+  silently defeats the entire point.
+- **Re-find the transcript each time.** A new session writes a new `*.jsonl`. Note which file
+  was newest *before* launching and wait for a different one, or you will read the previous
+  iteration's work and report it as this one's.
 
- Do you want to proceed?
- ❯ 1. Yes
-   2. Yes, and always allow…
-   3. No
+If the user is scripting the loop rather than driving it through you, point them at
+`homunculus.sh --ephemeral`, which does all of this and exits `0` done / `3` needs-a-human /
+`4` timed out so their loop can branch.
 
- Esc to cancel · Tab to amend · ctrl+e to explain
-```
+## 8. Multiple sessions
 
-When **unknown**: do NOT guess a keypress. Capture the full screen, show it to the user,
-and ask what to do.
-
----
-
-## 6. Handling a permission prompt — your judgment, not regex
-
-When you see a permission prompt, **read the full screen** to understand what B is asking
-permission to do. Then decide:
-
-**Hard deny** (send `3` Enter):
-- `rm -rf` on paths outside the project
-- `git push --force` to any remote
-- `curl … | sh` or `wget … | bash`
-- `sudo` anything
-- `dd if=` or `mkfs`
-- Writing to `/etc`, `/usr`, `/System`
-
-**Approve** (send `1` Enter — "Yes, just this once"):
-- Editing files inside the project directory
-- Running tests or builds
-- Reading files
-- `git` operations that aren't force-push
-- Network calls to known APIs B was tasked to call
-
-**Escalate to user** — ask before acting:
-- Anything writing outside the project but not clearly destructive
-- Database migrations
-- Anything involving credentials or secrets
-- Any action you are uncertain about
-
-**Never** send `2` ("Yes, and don't ask again") — keeping the gate live is the point.
-
-After deciding:
-```bash
-tmux -S "$SOCK" send-keys -t "$SESS" "1" Enter   # approve
-tmux -S "$SOCK" send-keys -t "$SESS" "3" Enter   # deny
-```
-
----
-
-## 7. Sending additional instructions mid-task
-
-When B is idle and you want to send a follow-up:
-
-```bash
-tmux -S "$SOCK" send-keys -t "$SESS" -l "now also write the tests"
-tmux -S "$SOCK" send-keys -t "$SESS" Enter
-```
-
-For multi-line instructions (use bracketed paste so newlines don't submit early):
-```bash
-printf '%s' "line one
-line two" | tmux -S "$SOCK" load-buffer -
-tmux -S "$SOCK" paste-buffer -p -t "$SESS"
-tmux -S "$SOCK" send-keys -t "$SESS" Enter
-```
-
----
-
-## 8. Supervision loop — how to run this without blocking
-
-You are NOT a bash script. You do not run a `while true` loop. Instead:
-
-1. Run `capture-pane` → read the screen → classify state → act → report to user.
-2. Wait (sleep 1–2 s via Bash) → capture again → repeat.
-3. Between checks you can ask the user questions, read B's JSONL, or handle other tasks.
-4. When B is idle and there is nothing left to send: declare the session done and tear down.
-
-You are the reasoning layer. Bash gives you individual snapshots. You decide.
-
----
-
-## 9. Multiple sessions
-
-To run B1 and B2 in parallel: launch each with a different `SESSION_ID` (different `SOCK`
-and `SESS`). Check each in round-robin: capture B1 → act; capture B2 → act.
-
-To run sessions sequentially: finish B1, kill its server, then launch B2.
+Run B1 and B2 in parallel by giving each its own `SESSION_ID` (hence its own `SOCK` and
+`SESS`); check them round-robin. Or run them sequentially: finish B1, kill it, launch B2.
 
 Teardown:
+
 ```bash
-tmux -S "$SOCK" kill-server
+tmux -S "$SOCK" kill-server; rm -f "$SOCK"
 ```
+
+In persistent mode, tear down when the user says they're done with B — not after a single
+task.
 
 ---
 
-## 10. Helper one-liners (set at the top of each Bash call for this session)
+## Helper one-liners
 
 ```bash
 SOCK="$TMPDIR/hom-B1.sock"; SESS="B1"
@@ -275,6 +384,7 @@ nb_last() { screen | grep -v '^[[:space:]]*$' | tail -"${1:-5}"; }
 
 ## Summary
 
-You plan. B executes. You watch. You approve or deny each of B's guarded actions with
-judgment. You ask the user when uncertain. You run as many B sessions as the task needs,
-parallel or sequential, and stay in conversation with the user throughout.
+`/homunculus` starts B and stops. You work normally. When the user says "use B", you hand that
+task over, press yes on every permission prompt so B never stalls, and stop the moment B
+finishes or asks something real — then you summarize what happened on B's side and let the
+user decide how to continue.
